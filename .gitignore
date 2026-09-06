@@ -1,4 +1,6 @@
-# Dependencies
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
 node_modules/
 
 # Expo
@@ -7,37 +9,42 @@ dist/
 web-build/
 expo-env.d.ts
 
-# Native build output (only relevant if you ever run a local prebuild;
-# EAS Build handles native builds in the cloud so these normally don't exist)
-android/
-ios/
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+credentials.json
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+*.log
+
+# macOS
+.DS_Store
+*.pem
 
 # Environment variables — NEVER commit real secrets
 .env
 .env.local
-.env.*.local
+.env*.local
 
-# Signing / credentials — NEVER commit these
-*.keystore
-*.jks
-*.p8
-*.p12
-*.mobileprovision
-credentials.json
+# typescript
+*.tsbuildinfo
 
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Editor / OS
-.DS_Store
-.vscode/*
-!.vscode/extensions.json
-
-# Test coverage
+# test coverage
 coverage/
 
-# TypeScript build info
-*.tsbuildinfo
+example
+
+# generated native folders (EAS Build handles native builds in the cloud)
+/ios
+/android

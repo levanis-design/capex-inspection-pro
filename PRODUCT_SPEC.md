@@ -48,6 +48,9 @@ enforcement (Free-tier enforcement is now MVP; Individual/Professional/
 Team/Enterprise limit _enforcement_ reuses the same mechanism but their
 specific numeric limits and payment collection are configured later),
 resident portal, full CMMS replacement, iOS app, and web admin console.
+See section 10a for the certificate/permit tracking piece of "Compliance
+document/date tracking" (Phase 14) and section 10b for the recurring
+log-review/vendor-report-currency piece (Phase 15) — both now built.
 
 ## 3. Plan Entitlement, Device Registration & Security (MVP requirement)
 
@@ -149,6 +152,26 @@ the general business `audit_log`; the ability to revoke a session or
 device; and a tested (not just scheduled) backup-restoration procedure.
 See `DATABASE_SCHEMA.md` Part A for the schema and enforcement mechanism,
 and `TEST_PLAN.md` for how each of these gets verified.
+
+**Phase 17 addition (2026-09-12):** two follow-up hardening items,
+closing gaps Phase 10 had left open. First, administrator MFA (above)
+gated _reaching the app at all_ as an org_admin, but didn't separately
+require a completed MFA session for each individual admin-only database
+action — that's now also enforced directly at the RLS/function layer,
+for the specific set of actions that are org_admin-exclusive (organization
+settings, admin-editing another profile, org-wide device visibility,
+security events, revoking a device, deactivating a critical inspection
+check, voiding/deleting a past-scheduled inspection, permanently deleting
+a property). Deliberately not extended to the broader
+org_admin/portfolio_manager/supervisor management set used elsewhere,
+since only org_admin has an MFA enrollment path today. Second, revoking a
+device previously didn't stop that device's existing session from
+continuing to work — the app now actively checks its own device's
+revoked status (before syncing, and on a short foreground poll) and signs
+out with an explanation as soon as it detects it. Both are locally
+verified, not yet applied to the live project; see `DATABASE_SCHEMA.md`'s
+migration `0027` entry and `CHANGELOG.md`'s Phase 17 entry for the full
+detail, including the client-side check's known limits.
 
 ## 4. Organizations, Roles & Permissions
 
@@ -298,6 +321,8 @@ notification is what protects against misuse of this convenience.
 | Checklist item detail                               | Status, photos, measurement, comment, priority, owner                                                                                        |
 | Deficiency detail                                   | Full finding record, escalation state                                                                                                        |
 | Corrective actions board                            | Filterable list/board by status                                                                                                              |
+| Compliance documents (Phase 14)                     | Per-property certificate/permit list — title, type, expiration, derived valid/expiring/expired status, photo/scan, notes                     |
+| Compliance tasks (Phase 15)                         | Per-property recurring review list — log reviews, vendor report reviews, derived OK/due soon/overdue status, review history with notes       |
 | Report preview / PDF viewer                         | Preview before approval, download/share after                                                                                                |
 | User & role management                              | Invite teammates (paid plans only), assign roles                                                                                             |
 | Devices & security (settings)                       | View this account's registered device, replace-device history, security notifications                                                        |
@@ -346,6 +371,27 @@ measurement flags, acceptable range, default priority/department,
 frequency, critical-item designation, regional/seasonal tags, active
 status, and version. None of this is hard-coded into mobile UI
 components — expanding the library is a data change, not an app release.
+Phase 13 (migration `0024`) confirmed this in practice: a much broader
+preventive-maintenance checklist (37 additional checks, 16 additional
+component types, covering exterior envelope, MEP, fire/life safety,
+interior common areas, basement/service areas, site/grounds, and pest
+prevention) was added entirely as data — no app code changed, and the
+existing per-item checkbox/comment/photo interaction on the inspection
+walkthrough screen picked it up automatically.
+
+**Phase 18 addition (2026-09-12):** the same "expanding the library is a
+data change" property held up again, this time against the user's own
+real walkthrough templates and completed field reports rather than a
+generic reference checklist. Migration `0028` added 4 new area types
+(Gas Meter Room, Telecom/IT Room, Amenity Space, Office), 23 new
+component types, 36 new checks, and — new to this pass — checks that
+confirm an inspection _tag_ is current and not expired (fire
+extinguisher, standpipe), a distinct concept from the compliance
+documents/tasks features (section 3.6/13): a tag lives on a physical
+asset and gets checked during an ordinary walkthrough, not tracked as
+its own property-level record with an expiration date. See
+`CHANGELOG.md`'s Phase 18 entry for the full list and the specific real
+findings that motivated each addition.
 
 **Critical checks:** a check marked `critical` cannot be permanently
 removed through an ordinary edit. Allowed states are active, inactive
@@ -452,6 +498,16 @@ structure:
 - Device-replacement/reinstall logic (section 3.3) operates independently
   of inspection sync — a device replacement never touches property or
   inspection entitlement, only the `devices` table.
+- **Shared-device tenant isolation (Phase 23):** the local mirror is
+  scoped to whichever organization is currently signed in, and is
+  cleared on sign-out — with no unsynced changes pending, this happens
+  immediately and silently; with unsynced changes pending, the person is
+  asked to confirm before anything is discarded (see CHANGELOG.md's
+  Phase 23 entry for the exact UX and which sign-out paths bypass the
+  prompt as security/error flows). This is what actually makes it safe
+  for one physical device to be reissued or shared across different
+  organizations' users over time, which section 3.3 (device replacement)
+  assumes but never previously specified at the local-storage level.
 
 ## 10. Deficiencies & Corrective Actions
 
@@ -461,16 +517,192 @@ completed, verified, closed, voided. Repeat-condition linkage, resident
 access, vendor assignment, aging/overdue flags, escalation state,
 completion evidence, and supervisor verification are all tracked.
 
+## 10a. Compliance Documents (Phase 14)
+
+Property-level tracking for certificates and permits with a renewal date
+— boiler certificate, elevator certificate, fire safety permit, FISP/LL11
+filing, or an open-ended "other" category. Deliberately separate from the
+area/component/check model in section 7: this is document/expiration-date
+state attached to a _property_, not a checkbox item attached to a
+_location_, so it lives in its own table (`compliance_documents`, see
+`DATABASE_SCHEMA.md`) rather than being forced through
+`check_applicability_rules`.
+
+Each document has a title, an optional issuing authority, an optional
+expiration date, a notes field, and at most one attached photo/scan. The
+status shown in the UI is derived, not just stored: given an expiration
+date, a document displays as "Valid," "Expiring soon" (within 30 days), or
+"Expired" automatically as today's date moves — a certificate can't
+silently keep reading "Valid" after it's lapsed just because nobody
+edited the row. Two additional states are set manually, since a date
+can't express them: "Renewal in progress" and "Not applicable" (e.g. a
+property with no elevator has no elevator certificate to track).
+
+Read access is portfolio-wide (any role can see what's expiring); adding,
+editing, deleting, and attaching a photo/scan are restricted to
+org_admin/portfolio_manager/supervisor, the same management role set used
+for vendors, findings, and corrective actions. Photo/scan capture is
+online-only (no offline queue) — unlike inspection photos, this is an
+office/admin task done with a normal connection, not a field capture with
+unreliable signal.
+
+**Explicitly out of scope for Phase 14**: incident/maintenance log review
+and vendor-report currency tracking. Those are recurring review
+workflows rather than a single document with an expiration date, and
+don't fit this table's shape either — see section 10b, which Phase 15
+built for exactly that.
+
+## 10b. Compliance Tasks (Phase 15)
+
+The recurring-review half of the same source checklist section that
+Phase 14 left out: "Review incident logs and maintenance logs for
+patterns" and "Ensure contractor and vendor reports are up to date."
+Neither is a document with an expiration date — each is a task that
+repeats on a schedule (weekly, monthly, quarterly, or annual), where what
+matters is whether someone actually did the review recently and what
+they found, not a single expiring artifact.
+
+Each compliance task has a type (log review, vendor report review, or an
+open-ended "other"), a title, an optional description, a frequency, and
+— for a vendor report review task specifically — a linked vendor (from
+the same `vendors` table corrective actions already use). A task's due
+status is derived the same way a compliance document's is: "OK," "Due
+soon" (within 7 days), "Overdue," or "Never reviewed," computed from the
+most recent completion plus the task's frequency, not from a stored
+status that could go stale.
+
+Recording a review is its own append-only log
+(`compliance_task_completions`) rather than a single "last reviewed"
+field — every time someone marks a task reviewed, that's a new entry
+with its own timestamp, who did it, and an optional note on what they
+found, so a pattern across multiple reviews (the whole point of "review
+logs for patterns") stays visible rather than being overwritten each
+time.
+
+Same permission model as compliance documents: read is portfolio-wide,
+managing tasks and recording reviews are restricted to
+org_admin/portfolio_manager/supervisor. Deliberately not auto-seeded per
+property (unlike the checklist library) — a log-review task applies to
+any property generically, but a vendor-report-review task only makes
+sense for a vendor actually used there, and there's no reliable way to
+infer that automatically, so an admin adds the tasks that apply.
+
 ## 11. Reports
 
-(Unchanged from v0.1.) Generated client-side/on-device. Contents now also
-implicitly include the list of skipped/inaccessible locations from the
-final-review step, since that's part of "areas not inspected" in the
-report body. Immutable once approved.
+Generated client-side/on-device, one PDF per inspection, immutable once
+approved. **The detailed design below was written during Phase 7
+implementation (2026-09-10)** — v0.1's original detail behind this
+section was never carried forward into v0.2, which only kept the
+one-line summary ("branded PDF reports, generated on-device, immutable
+once approved"). See `DATABASE_SCHEMA.md`'s "reports" entry and
+`supabase/migrations/0021` for the full data-model rationale; this
+section covers product behavior.
+
+A report can only be generated for a `completed` inspection (submitting
+the inspection via the Review & Submit screen is what unlocks it). Only
+an org_admin, portfolio_manager, or supervisor may approve one — an
+inspector/viewer sees a "waiting for approval" message instead of an
+Approve button, matching this section's role table. There is no draft
+state persisted anywhere: "Preview" renders the current state of the
+inspection to a PDF and opens it in the device's share/preview sheet
+without recording anything, and "Approve & finalize" independently
+renders a fresh PDF, uploads it, and records it as the one, permanent
+report for that inspection. Once approved, a report cannot be edited,
+regenerated, or re-approved — if something needs to be corrected, that's
+a product decision for a future phase (a `follow_up` inspection type
+already exists for re-checking a specific condition, which may end up
+being the intended mechanism), not something this phase guesses a
+versioning scheme for.
+
+Report contents: a cover header (organization name, property name and
+address, inspection type, scheduled/completed dates, assigned inspector,
+approver name and date); a scope summary table listing every area with
+its status, and the required reason for any skipped/inaccessible one
+(this is the "areas not inspected" content the original spec line
+called out); a findings section covering every item recorded as
+`deficiency` or `pending_verification`, sorted P1 first, each with its
+observation/recommendation/code reference/responsible department, its
+current corrective-action status and escalation flag, and its photos;
+and a full item-by-item checklist appendix (every item, every status,
+grouped by area) as the complete record. The findings section reflects
+each item's corrective-action status _as of the moment of approval_ —
+the report itself never changes afterward even though the underlying
+corrective action keeps moving on the board.
 
 ## 12. Dashboard & Analytics (MVP)
 
-(Unchanged from v0.1.) Metrics and filters as previously specified.
+**The detailed design below was written during Phase 8 implementation
+(2026-09-10)** — same situation section 11 was in before Phase 7: v0.1's
+original detail behind this section was never carried forward into v0.2,
+which only kept the one-line summary ("Portfolio-level counts, filters,
+aging"). See `src/lib/dashboard.ts` for the query-level implementation;
+this section covers what's shown and why.
+
+The Dashboard tab is a portfolio-level, read-only summary — every number
+on it is informational, per the "remaining-slot indicators (informational
+only)" framing already established for entitlement limits in section 3.1;
+nothing on this screen writes anything or gates any action. Tapping any
+stat navigates to the tab that actually manages that data (Properties,
+Inspections, or Corrective Actions) rather than drilling into a
+dashboard-specific detail view — the board/list screens those tabs
+already have are the detail view.
+
+A single-property filter (a horizontally scrollable row of pills: "All
+properties" plus each active property, "All properties" selected by
+default) narrows every metric below except property slot usage, which is
+always portfolio-wide (it's a statement about the organization's plan
+entitlement, not about one property). Archived properties are excluded
+from the filter list itself (there's no reason to drill into one day to
+day) but are NOT excluded from the "All properties" totals, since their
+history (findings, corrective actions) still belongs to the organization.
+
+Metrics shown:
+
+- **Property slot usage** — active + archived property count against
+  `organizations.property_slot_limit` (matches `create_property()`'s own
+  counting rule from section 3.1 exactly: an archived property still
+  consumes its slot).
+- **Inspections by status** — scheduled, in progress, completed,
+  postponed, voided, plus a derived **overdue** count (status is
+  scheduled or in_progress AND `scheduled_date` is in the past). Overdue
+  is not a stored status — it's the same read-time computation the rest
+  of this app already prefers over a stored/derived column (see
+  `isOverdueForCompletion()` in `corrective-action-types.ts` for the
+  precedent).
+- **Open findings by priority** — P1-P4 counts (P1 highlighted, since a
+  nonzero P1 count is the single most urgent thing this screen can show),
+  a "not yet prioritized" count if any open finding has no priority set,
+  and an **escalated** count (also highlighted). "Open" here means a
+  finding's `current_status` hasn't reached one of the terminal states
+  (completed, verified, closed, voided) — the same non-terminal set the
+  Corrective Actions board's own default filter already uses.
+- **Corrective actions** — total open count, and an **overdue** count
+  (open AND `target_completion_date` is in the past) — the same
+  overdue-for-completion definition `corrective-action-types.ts` already
+  uses per-row on the deficiency detail screen, just aggregated here.
+- **Quick links** are implicit: every stat row above is itself the link
+  (tapping it opens the relevant tab), rather than a separate row of
+  buttons — see the screens table in section 6.
+
+Deliberately out of scope for this phase: any historical/trend view
+(week-over-week, month-over-month), cost roll-ups (estimated/actual cost
+aggregation across corrective actions), and a multi-property comparison
+view (side-by-side across more than one property at a time) — the filter
+is single-select by design for the MVP. All three are natural follow-ups
+once there's enough real portfolio data to make them worth building.
+
+**Phase 16 addition (2026-09-12):** a sixth section, **Compliance**, with
+two more counts — documents needing attention (expired or expiring soon,
+across every property) and tasks needing attention (overdue, due soon, or
+never reviewed). Both reuse the exact same derived-status functions as
+their per-property attention badges (`computeDisplayStatus`,
+`computeTaskDueStatus` — see sections 10a/10b), just aggregated across
+the whole portfolio (or narrowed to one property, same as every other
+section here) instead of one property at a time. The one difference from
+every other section: there's no portfolio-wide compliance list screen to
+route to, so tapping a row opens that specific property's compliance
+screen when the filter is narrowed to one property, or the Properties tab
+(to pick one) when it's set to "All properties."
 
 ## 13. Data Protection, Retention & Audit
 
@@ -525,13 +757,28 @@ and offline-reliability criteria from v0.1.
   sign-in — **added this revision, reinstall behavior per your decision**.
 - 2026-08-18 — Location-driven area/component/inspection-check hierarchy
   replaces the flat template model — **added this revision**.
+- 2026-09-07 — Local-database + encryption approach for offline SQLite
+  (Phase 5C) finalized: `expo-sqlite` for the local mirror, with
+  application-layer encryption via `tweetnacl`'s `secretbox`
+  (XSalsa20-Poly1305) rather than a fully-encrypted database file (e.g. a
+  SQLCipher-backed driver). Reasoning: this project has deliberately
+  stayed on plain Expo managed workflow -- runnable in Expo Go, no
+  `android`/`ios` native directories, no custom dev client -- through
+  every phase so far, and a SQLCipher-style driver needs a custom native
+  build (ejecting), which is a large infrastructure change this phase
+  didn't ask for. Instead: every free-text/sensitive field (observations,
+  status reasons, photo captions) is encrypted before it touches SQLite,
+  and photo bytes are encrypted before being written to local device
+  storage; structural fields (ids, statuses, titles, timestamps) stay
+  plaintext so the mirror is queryable. The symmetric key is generated
+  once per install and stored in `expo-secure-store` (Keychain/Keystore),
+  same as the Supabase auth session token. See `src/lib/local-crypto.ts`'s
+  header comment for the full detail, and flag it if you'd rather invest
+  in ejecting for whole-database encryption instead.
 - Still open / recommended defaults, flag if you want something different:
   - Transactional email provider for security notifications (device
     replacement, etc.) — not yet chosen; will propose an option in
     Phase 2.
-  - Exact local-database encryption library for offline SQLite — will be
-    finalized in Phase 6 (candidates include SQLCipher-compatible SQLite
-    drivers for Expo).
   - Play Integrity requires a Google Cloud project linked to your Play
     Console app — we'll set this up together in Phase 12 lead-up, but the
     backend code will be written against it starting in Phase 2/3.

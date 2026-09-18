@@ -80,14 +80,54 @@ scaffold) is in progress.
 
 ## Available scripts
 
-| Command                | Purpose                                                                                |
-| ---------------------- | -------------------------------------------------------------------------------------- |
-| `npm start`            | Start the Expo dev server (scan the QR code with Expo Go)                              |
-| `npm run android`      | Start the dev server and try to launch directly on a connected/emulated Android device |
-| `npm run lint`         | Check code style and common mistakes (ESLint)                                          |
-| `npm run format`       | Auto-format all files (Prettier)                                                       |
-| `npm run format:check` | Check formatting without changing files (used in CI later)                             |
-| `npm run typecheck`    | Check for TypeScript type errors without building                                      |
+| Command                            | Purpose                                                                                |
+| ---------------------------------- | -------------------------------------------------------------------------------------- |
+| `npm start`                        | Start the Expo dev server (scan the QR code with Expo Go)                              |
+| `npm run android`                  | Start the dev server and try to launch directly on a connected/emulated Android device |
+| `npm run lint`                     | Check code style and common mistakes (ESLint)                                          |
+| `npm run format`                   | Auto-format all files (Prettier)                                                       |
+| `npm run format:check`             | Check formatting without changing files (used in CI later)                             |
+| `npm run typecheck`                | Check for TypeScript type errors without building                                      |
+| `npm run build:android:preview`    | Build a standalone, installable Android APK via EAS (see below)                        |
+| `npm run build:android:production` | Build a Play-Store-ready `.aab` via EAS                                                |
+| `npm run build:android:dev-client` | Build a debug dev-client APK (still needs a Metro connection)                          |
+
+## Building a standalone Android app (works without dev-server wifi)
+
+`npm start` + Expo Go only works while the phone is on the same network as
+the machine running the dev server -- Expo Go connects live to the local
+Metro bundler for hot reload. A standalone build has no such dependency:
+the JS is bundled into the app itself, so once installed it only ever
+needs to reach Supabase over the internet (and per Phase 5C, most
+inspection work keeps functioning even with no connection at all). This
+is what you want to actually carry the app out into the field.
+
+One-time setup (needs your own free Expo account -- this can't be done
+from an automated session, since it requires an interactive login):
+
+```
+npx eas-cli login
+npx eas-cli env:create --scope project --name EXPO_PUBLIC_SUPABASE_URL --value <your-url> --environment preview --visibility plaintext
+npx eas-cli env:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value <your-anon-key> --environment preview --visibility plaintext
+```
+
+(Repeat the two `env:create` commands with `--environment production` once
+you're ready for a real Play Store build -- see `eas.json`'s three
+profiles for what each is for.)
+
+Then, to get an installable APK:
+
+```
+npm run build:android:preview
+```
+
+This uploads the project to Expo's build servers and queues an Android
+build -- typically 10-20 minutes on the free tier (longer if the queue is
+busy). When it finishes, `eas build` prints a download link (and a QR
+code) for the `.apk`; install it directly on an Android device (you may
+need to allow "install unknown apps" for your browser/file manager once).
+From then on, that install is a normal standalone app -- no laptop, no
+shared wifi, no Expo Go required.
 
 ## Project structure
 

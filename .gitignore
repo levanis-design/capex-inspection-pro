@@ -48,3 +48,8 @@ example
 # generated native folders (EAS Build handles native builds in the cloud)
 /ios
 /android
+
+# Session scratch / internal working folders — not part of the app
+/Claude outputs/
+_to_delete/
+/error codes/
